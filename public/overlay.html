@@ -7,17 +7,23 @@
 <style>
   :root { --accent:#9146ff; --accent2:#00e5ff; --bg:rgba(15,12,30,.88); }
   * { box-sizing:border-box; }
-  html,body { margin:0; background:transparent; font-family:"Segoe UI",system-ui,sans-serif; color:#fff; }
+  html,body { width:100%; height:100%; margin:0; overflow:hidden; background:transparent; font-family:"Segoe UI",system-ui,sans-serif; color:#fff; }
   .card { width:min(440px, calc(100vw - 40px)); margin:20px; padding:18px 20px; background:var(--bg); border:2px solid var(--accent);
           border-radius:16px; box-shadow:0 8px 30px rgba(0,0,0,.5); animation:pop .35s ease; position:relative; }
   @keyframes pop { from { transform:translateY(20px) scale(.96); opacity:0; } to { transform:none; opacity:1; } }
   .tag { font-size:12px; letter-spacing:2px; text-transform:uppercase; color:var(--accent2); font-weight:700; }
   .q { font-size:22px; font-weight:800; margin:6px 0 14px; line-height:1.25; }
-  .opt { position:relative; margin:8px 0; border-radius:10px; overflow:hidden; background:rgba(255,255,255,.08); height:42px; }
-  .bar { position:absolute; inset:0 auto 0 0; width:0%; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .5s ease; opacity:.85; }
+  .opt { position:relative; margin:8px 0; border-radius:10px; overflow:hidden; background:rgba(255,255,255,.08); height:46px; transform:translateZ(0); }
+  .bar { position:absolute; inset:0 auto 0 0; width:0%; border-radius:inherit; background:linear-gradient(90deg,var(--accent),var(--accent2));
+         transition:width .7s cubic-bezier(.22,.8,.25,1), filter .3s ease; opacity:.85; }
   .row { position:absolute; inset:0; display:flex; align-items:center; justify-content:space-between; padding:0 12px; font-weight:700; }
+  .row > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row > span:last-child { flex-shrink:0; margin-left:10px; }
   .num { background:#fff; color:#111; border-radius:6px; padding:1px 8px; margin-right:10px; font-size:14px; }
-  .opt.win { outline:3px solid gold; }
+  .opt.vote-flash { animation:vote-flash .58s ease-out; }
+  @keyframes vote-flash { 0% { filter:brightness(1); box-shadow:0 0 0 0 rgba(0,229,255,0); } 28% { filter:brightness(1.65); box-shadow:0 0 0 4px rgba(0,229,255,.75),0 0 26px rgba(0,229,255,.65); } 100% { filter:brightness(1); box-shadow:0 0 0 0 rgba(0,229,255,0); } }
+  .opt.win { height:52px; outline:2px solid #ffe66d; background:rgba(255,230,109,.14); box-shadow:0 0 22px rgba(255,210,60,.25); }
+  .opt.win .bar { opacity:.75; background:linear-gradient(90deg,#d89718,#ffe66d); }
   .foot { margin-top:10px; font-size:13px; opacity:.8; display:flex; justify-content:space-between; }
   .closed { color:gold; font-weight:700; }
   .top { margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.15); font-size:13px; }
@@ -28,6 +34,15 @@
            box-shadow:0 3px 14px rgba(0,0,0,.45); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .bonus.show { display:block; animation:bonus-pop 3.8s ease forwards; }
   @keyframes bonus-pop { 0% { opacity:0; transform:translateY(-8px) scale(.9); } 12%,78% { opacity:1; transform:none; } 100% { opacity:0; transform:translateY(-5px) scale(.96); } }
+  #confetti { position:fixed; inset:0; width:100vw; height:100vh; z-index:20; pointer-events:none; }
+  .sound-toggle { display:none; position:fixed; z-index:30; top:14px; right:14px; border:1px solid rgba(255,255,255,.5); border-radius:999px;
+                  padding:8px 12px; color:#fff; background:rgba(15,12,30,.86); font:700 12px "Segoe UI",system-ui,sans-serif;
+                  box-shadow:0 3px 14px rgba(0,0,0,.35); cursor:pointer; }
+  body.controls-enabled .sound-toggle { display:block; }
+  .sound-toggle:focus-visible { outline:3px solid var(--accent2); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) {
+    *,*::before,*::after { scroll-behavior:auto !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
+  }
 </style>
 </head>
 <body>
@@ -39,11 +54,83 @@
   <div class="foot"><span id="total"></span><span id="hint"></span></div>
   <div class="top" id="top"></div>
 </div>
+<canvas id="confetti" aria-hidden="true"></canvas>
+<button class="sound-toggle" id="soundToggle" type="button" aria-pressed="false">Sound: muted</button>
 <script>
   const app = document.getElementById("app");
   const bonus = document.getElementById("bonus");
+  const soundToggle = document.getElementById("soundToggle");
+  const optionContainer = document.getElementById("opts");
+  const confettiCanvas = document.getElementById("confetti");
+  const confettiContext = confettiCanvas.getContext("2d");
+  const query = new URLSearchParams(location.search);
+  document.body.classList.toggle("controls-enabled", query.get("controls") === "1");
+  let soundEnabled = query.get("sound") === "1";
+  let audioContext = null;
+  let optionNodes = [];
+  let lastPollKey = "";
+  let lastVotes = [];
+  let lastPollOpen = false;
   let bonusTimer;
+  let confettiFrame = 0;
   let retry = 0;
+  updateSoundButton();
+
+  soundToggle.addEventListener("click", () => {
+    soundEnabled = !soundEnabled;
+    updateSoundButton();
+    if (soundEnabled) {
+      try {
+        const AudioContextType = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextType) {
+          audioContext ||= new AudioContextType();
+          if (audioContext.state === "suspended") audioContext.resume().catch(() => {});
+        }
+      } catch (_) {}
+    }
+  });
+
+  function updateSoundButton() {
+    soundToggle.textContent = soundEnabled ? "🔊 Sound: on" : "🔇 Sound: muted";
+    soundToggle.setAttribute("aria-pressed", String(soundEnabled));
+    soundToggle.setAttribute("aria-label", soundEnabled ? "Mute overlay sounds" : "Unmute overlay sounds");
+  }
+
+  function withAudio(play) {
+    if (!soundEnabled) return;
+    try {
+      const AudioContextType = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextType) return;
+      audioContext ||= new AudioContextType();
+      const context = audioContext;
+      const ready = context.state === "suspended" ? context.resume() : Promise.resolve();
+      ready.then(() => { if (soundEnabled) play(context); }).catch(() => {});
+    } catch (_) {}
+  }
+
+  function tone(context, frequency, offset, duration, volume = .045, wave = "sine") {
+    const start = context.currentTime + offset;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = wave;
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(.0001, start);
+    gain.gain.exponentialRampToValueAtTime(volume, start + .015);
+    gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + duration + .02);
+  }
+
+  function playVoteBeep() {
+    withAudio((context) => tone(context, 740, 0, .12, .035, "sine"));
+  }
+
+  function playWinnerFanfare() {
+    withAudio((context) => [523, 659, 784, 1047].forEach((frequency, i) => tone(context, frequency, i * .13, .32, .055, "triangle")));
+  }
+
   function connect() {
     const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
     ws.onopen = () => { retry = 0; };
@@ -67,23 +154,132 @@
     clearTimeout(bonusTimer);
     bonusTimer = setTimeout(() => bonus.classList.remove("show"), 3900);
   }
+
+  function createOptions(options) {
+    optionContainer.replaceChildren();
+    optionNodes = options.map((option, index) => {
+      const root = document.createElement("div");
+      root.className = "opt";
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      const row = document.createElement("div");
+      row.className = "row";
+      const label = document.createElement("span");
+      const number = document.createElement("span");
+      number.className = "num";
+      number.textContent = String(index + 1);
+      const text = document.createElement("span");
+      text.textContent = option.text;
+      label.append(number, text);
+      const result = document.createElement("span");
+      row.append(label, result);
+      root.append(bar, row);
+      optionContainer.append(root);
+      return { root, bar, result };
+    });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      for (const node of optionNodes) node.bar.style.width = `${node.percent || 0}%`;
+    }));
+  }
+
+  function flashOption(node) {
+    node.root.classList.remove("vote-flash");
+    void node.root.offsetWidth;
+    node.root.classList.add("vote-flash");
+    setTimeout(() => node.root.classList.remove("vote-flash"), 650);
+  }
+
+  function resizeConfetti() {
+    const scale = Math.min(window.devicePixelRatio || 1, 2);
+    confettiCanvas.width = Math.floor(window.innerWidth * scale);
+    confettiCanvas.height = Math.floor(window.innerHeight * scale);
+    confettiContext.setTransform(scale, 0, 0, scale, 0, 0);
+  }
+  window.addEventListener("resize", resizeConfetti);
+  resizeConfetti();
+
+  function celebrate() {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    playWinnerFanfare();
+    cancelAnimationFrame(confettiFrame);
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const colors = ["#ffe66d", "#9146ff", "#00e5ff", "#ff4d8d", "#ffffff"];
+    const pieces = Array.from({ length: 170 }, () => ({
+      x: Math.random() * width,
+      y: -20 - Math.random() * height * .65,
+      vx: (Math.random() - .5) * 3.2,
+      vy: 2 + Math.random() * 4.5,
+      width: 5 + Math.random() * 6,
+      height: 7 + Math.random() * 9,
+      rotation: Math.random() * Math.PI,
+      spin: (Math.random() - .5) * .18,
+      color: colors[Math.floor(Math.random() * colors.length)],
+    }));
+    const started = performance.now();
+    function draw(now) {
+      confettiContext.clearRect(0, 0, width, height);
+      for (const piece of pieces) {
+        piece.x += piece.vx;
+        piece.y += piece.vy;
+        piece.vy += .035;
+        piece.rotation += piece.spin;
+        confettiContext.save();
+        confettiContext.translate(piece.x, piece.y);
+        confettiContext.rotate(piece.rotation);
+        confettiContext.fillStyle = piece.color;
+        confettiContext.fillRect(-piece.width / 2, -piece.height / 2, piece.width, piece.height);
+        confettiContext.restore();
+      }
+      if (now - started < 4200) confettiFrame = requestAnimationFrame(draw);
+      else confettiContext.clearRect(0, 0, width, height);
+    }
+    confettiFrame = requestAnimationFrame(draw);
+  }
+
   function render(s) {
     const p = s.poll;
-    if (!p) { app.classList.add("hidden"); return; }
+    if (!p) {
+      app.classList.add("hidden");
+      lastPollKey = "";
+      lastVotes = [];
+      lastPollOpen = false;
+      return;
+    }
     app.classList.remove("hidden");
+    const key = JSON.stringify([p.question, p.options.map(option => option.text)]);
+    const newPoll = key !== lastPollKey || (p.open && !lastPollOpen);
+    const ended = key === lastPollKey && lastPollOpen && !p.open;
+    if (newPoll) {
+      lastPollKey = key;
+      lastVotes = p.options.map(option => option.votes);
+      createOptions(p.options);
+    } else if (p.open && p.options.some((option, i) => option.votes > (lastVotes[i] || 0))) {
+      playVoteBeep();
+    }
+
     document.getElementById("tag").textContent = p.open ? "● Live Chat Poll" : "Poll Closed";
     document.getElementById("q").textContent = p.question;
-    const max = Math.max(...p.options.map(o => o.votes));
-    document.getElementById("opts").innerHTML = p.options.map((o, i) => {
-      const pct = p.total ? Math.round(o.votes / p.total * 100) : 0;
-      const win = !p.open && max > 0 && o.votes === max;
-      return `<div class="opt ${win ? "win" : ""}"><div class="bar" style="width:${pct}%"></div>
-        <div class="row"><span><span class="num">${i + 1}</span>${esc(o.text)}</span><span>${pct}% · ${o.votes}</span></div></div>`;
-    }).join("");
+    const max = Math.max(...p.options.map(option => option.votes));
+    const winners = p.options.map((option, index) => ({ option, index })).filter(({ option }) => max > 0 && option.votes === max);
+    p.options.forEach((option, index) => {
+      const node = optionNodes[index];
+      const pct = p.total ? Math.round(option.votes / p.total * 100) : 0;
+      node.percent = pct;
+      if (!newPoll) node.bar.style.width = `${pct}%`;
+      node.root.classList.toggle("win", !p.open && winners.some(winner => winner.index === index));
+      node.result.textContent = !p.open && winners.some(winner => winner.index === index)
+        ? `${pct}% · ${option.votes} · WINNER`
+        : `${pct}% · ${option.votes}`;
+      if (!newPoll && p.open && option.votes > (lastVotes[index] || 0)) flashOption(node);
+    });
     document.getElementById("total").textContent = p.total + " votes";
     document.getElementById("hint").innerHTML = p.open ? "Type <b>1</b>–<b>" + p.options.length + "</b> in chat" : '<span class="closed">Final result</span>';
     document.getElementById("top").innerHTML = s.top.length
       ? "🏆 Top voters: " + s.top.map(t => `<b>${esc(t.name)}</b> (${t.votes})`).join(" · ") : "";
+    if (ended && winners.length) celebrate();
+    lastVotes = p.options.map(option => option.votes);
+    lastPollOpen = p.open;
   }
   connect();
 </script>

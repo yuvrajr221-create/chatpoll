@@ -18,7 +18,18 @@ npm start
 npm test      # API tests
 ```
 - Control panel: http://localhost:3000/control.html
-- OBS overlay: http://localhost:3000/overlay.html (Browser Source, e.g. 480x600)
+- OBS overlay: http://localhost:3000/overlay.html (Browser Source, e.g. 1920x1080)
+
+## Overlay URL options
+
+The overlay page has a transparent background and hides scrollbars, so it can be used as a full-size 1920×1080 OBS Browser Source. The poll card stays compact in the top-left corner.
+
+| Parameter | Default | Behavior |
+|---|---|---|
+| `sound=1` | Muted | Enables short generated vote beeps and a winner fanfare. Sound is off unless requested. |
+| `controls=1` | Hidden | Shows a small button in the top-right corner to mute or unmute sound while the overlay is live. |
+
+Parameters can be combined: `http://localhost:3000/overlay.html?sound=1&controls=1`. With `controls=1` alone, the overlay starts muted and the button can enable sound.
 
 ## Security / config
 | Env var | Default | Meaning |
