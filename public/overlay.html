@@ -9,7 +9,7 @@
   * { box-sizing:border-box; }
   html,body { margin:0; background:transparent; font-family:"Segoe UI",system-ui,sans-serif; color:#fff; }
   .card { width:min(440px, calc(100vw - 40px)); margin:20px; padding:18px 20px; background:var(--bg); border:2px solid var(--accent);
-          border-radius:16px; box-shadow:0 8px 30px rgba(0,0,0,.5); animation:pop .35s ease; }
+          border-radius:16px; box-shadow:0 8px 30px rgba(0,0,0,.5); animation:pop .35s ease; position:relative; }
   @keyframes pop { from { transform:translateY(20px) scale(.96); opacity:0; } to { transform:none; opacity:1; } }
   .tag { font-size:12px; letter-spacing:2px; text-transform:uppercase; color:var(--accent2); font-weight:700; }
   .q { font-size:22px; font-weight:800; margin:6px 0 14px; line-height:1.25; }
@@ -23,11 +23,17 @@
   .top { margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.15); font-size:13px; }
   .top b { color:var(--accent2); }
   .hidden { display:none; }
+  .bonus { display:none; position:absolute; z-index:2; top:10px; right:10px; max-width:75%; padding:7px 11px; border-radius:999px;
+           color:#161020; background:linear-gradient(110deg,#ffe66d,#ffb703); font-size:12px; line-height:1.25; font-weight:900;
+           box-shadow:0 3px 14px rgba(0,0,0,.45); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bonus.show { display:block; animation:bonus-pop 3.8s ease forwards; }
+  @keyframes bonus-pop { 0% { opacity:0; transform:translateY(-8px) scale(.9); } 12%,78% { opacity:1; transform:none; } 100% { opacity:0; transform:translateY(-5px) scale(.96); } }
 </style>
 </head>
 <body>
 <div id="app" class="card hidden">
   <div class="tag" id="tag">Chat Poll</div>
+  <div class="bonus" id="bonus" aria-live="polite"></div>
   <div class="q" id="q"></div>
   <div id="opts"></div>
   <div class="foot"><span id="total"></span><span id="hint"></span></div>
@@ -35,17 +41,32 @@
 </div>
 <script>
   const app = document.getElementById("app");
+  const bonus = document.getElementById("bonus");
+  let bonusTimer;
   let retry = 0;
   function connect() {
     const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
     ws.onopen = () => { retry = 0; };
     ws.onmessage = (e) => {
-      try { const m = JSON.parse(e.data); if (m && m.type === "state") render(m.state); } catch (_) {}
+      try {
+        const m = JSON.parse(e.data);
+        if (m && m.type === "state") render(m.state);
+        if (m && m.type === "bonus") showBonus(m.event);
+      } catch (_) {}
     };
     ws.onerror = () => ws.close();
     ws.onclose = () => setTimeout(connect, Math.min(15000, 1000 * 2 ** retry++));
   }
   function esc(s){ return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+  function showBonus(e) {
+    if (!e) return;
+    bonus.textContent = `+${e.votes} bonus · ${e.who} → ${e.option}`;
+    bonus.classList.remove("show");
+    void bonus.offsetWidth;
+    bonus.classList.add("show");
+    clearTimeout(bonusTimer);
+    bonusTimer = setTimeout(() => bonus.classList.remove("show"), 3900);
+  }
   function render(s) {
     const p = s.poll;
     if (!p) { app.classList.add("hidden"); return; }

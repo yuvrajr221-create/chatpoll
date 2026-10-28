@@ -29,7 +29,16 @@ before(async () => {
   BASE = `http://127.0.0.1:${port}`;
 
   proc = spawn(process.execPath, [path.join(__dirname, "..", "server.js")], {
-    env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), CONTROL_TOKEN: TOKEN, DATA_FILE: path.join(os.tmpdir(), `chatpoll-${port}.json`) },
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      CONTROL_TOKEN: TOKEN,
+      DATA_FILE: path.join(os.tmpdir(), `chatpoll-${port}.json`),
+      TWITCH_CLIENT_ID: "",
+      TWITCH_USER_TOKEN: "",
+      TWITCH_BROADCASTER_ID: "",
+    },
     stdio: "ignore",
   });
   for (let i = 0; i < 50; i++) {

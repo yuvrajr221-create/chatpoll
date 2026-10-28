@@ -6,6 +6,20 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const WebSocket = require("ws");
+const { EventSubClient } = require("./eventsub");
+
+// Load simple KEY=value entries for local development while preserving shell-provided overrides.
+try {
+  const envFile = fs.readFileSync(path.join(__dirname, ".env"), "utf8");
+  for (const line of envFile.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (!match || process.env[match[1]] !== undefined) continue;
+    const value = match[2].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, (_all, doubleQuoted, singleQuoted) => doubleQuoted ?? singleQuoted);
+    process.env[match[1]] = value;
+  }
+} catch (error) {
+  if (error.code !== "ENOENT") console.error("Could not read .env:", error.message);
+}
 
 const PORT = process.env.PORT || 3000;
 // Bind to localhost by default so the control API is not reachable from the network.
@@ -14,6 +28,9 @@ const HOST = process.env.HOST || "127.0.0.1";
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const ENABLE_TEST_VOTES = process.env.ENABLE_TEST_VOTES !== "0";
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data.json");
+const BONUS_REWARD_TITLE = process.env.BONUS_REWARD_TITLE || "Bonus Vote";
+const configuredBonusVotes = Number.parseInt(process.env.BONUS_VOTES || "1", 10);
+const BONUS_VOTES = Number.isSafeInteger(configuredBonusVotes) && configuredBonusVotes > 0 ? configuredBonusVotes : 1;
 const MAX_HISTORY = 200;
 const MAX_LEADERBOARD = 1000;
 
@@ -101,6 +118,13 @@ function broadcast() {
   }, 100);
 }
 
+function broadcastBonus(event) {
+  const msg = JSON.stringify({ type: "bonus", event });
+  wss.clients.forEach((c) => {
+    if (c.readyState === WebSocket.OPEN) c.send(msg);
+  });
+}
+
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "state", state: publicState() }));
 });
@@ -183,6 +207,61 @@ function handleChat(user, text) {
   leaderboard[user] = (leaderboard[user] || 0) + 1;
   broadcast();
   return true;
+}
+
+function addBonusVotes(name, count, preferredOption, source) {
+  if (!poll || !poll.open || !poll.options.length) return false;
+  let optionIndex = -1;
+  const choice = String(preferredOption || "").trim();
+  const numberChoice = choice.match(/^([1-9])$/);
+  if (numberChoice) {
+    const candidate = Number(numberChoice[1]) - 1;
+    if (candidate < poll.options.length) optionIndex = candidate;
+  } else if (choice) {
+    optionIndex = poll.options.findIndex((option) => option.text.toLowerCase() === choice.toLowerCase());
+  }
+  if (optionIndex < 0) {
+    optionIndex = 0;
+    for (let i = 1; i < poll.options.length; i++) {
+      if (poll.options[i].votes > poll.options[optionIndex].votes) optionIndex = i;
+    }
+  }
+
+  const votes = Math.max(1, Math.floor(Number(count) || 1));
+  const who = String(name || "Anonymous").slice(0, 80);
+  poll.options[optionIndex].votes += votes;
+  if (who.toLowerCase() !== "anonymous") {
+    const key = who.toLowerCase();
+    leaderboard[key] = (leaderboard[key] || 0) + votes;
+  }
+  save();
+  broadcast();
+  broadcastBonus({ who, votes, option: poll.options[optionIndex].text, source });
+  return true;
+}
+
+function handleEventSub(type, event) {
+  if (type === "channel.channel_points_custom_reward_redemption.add") {
+    const rewardTitle = String(event.reward && event.reward.title || "");
+    if (rewardTitle.toLowerCase() !== BONUS_REWARD_TITLE.toLowerCase()) return;
+    addBonusVotes(event.user_name || event.user_login, BONUS_VOTES, event.user_input, "Channel Points");
+    return;
+  }
+  if (type === "channel.subscribe") {
+    // Gifted recipients are counted in channel.subscription.gift to avoid awarding twice.
+    if (event.is_gift) return;
+    addBonusVotes(event.user_name || event.user_login, BONUS_VOTES, "", "Subscription");
+    return;
+  }
+  if (type === "channel.subscription.message") {
+    addBonusVotes(event.user_name || event.user_login, BONUS_VOTES, "", "Resubscription");
+    return;
+  }
+  if (type === "channel.subscription.gift") {
+    const who = event.is_anonymous ? "Anonymous" : (event.user_name || event.user_login || "Anonymous");
+    const total = Math.max(1, Math.floor(Number(event.total) || 1));
+    addBonusVotes(who, BONUS_VOTES * total, "", total > 1 ? `${total} Gift Subscriptions` : "Gift Subscription");
+  }
 }
 
 // ---------- Control API: token check + rate limit ----------
@@ -275,7 +354,14 @@ app.use((err, req, res, next) => {
 });
 
 // Flush data on shutdown so closed-poll history and leaderboard aren't lost.
+const eventSub = new EventSubClient({
+  onEvent: handleEventSub,
+  logger: console,
+});
+eventSub.start();
+
 function shutdown() {
+  eventSub.stop();
   try { fs.writeFileSync(DATA_FILE, JSON.stringify({ history, leaderboard }, null, 2)); } catch (_) {}
   process.exit(0);
 }
