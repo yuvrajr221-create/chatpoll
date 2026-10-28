@@ -269,11 +269,11 @@
       if (!newPoll) node.bar.style.width = `${pct}%`;
       node.root.classList.toggle("win", !p.open && winners.some(winner => winner.index === index));
       node.result.textContent = !p.open && winners.some(winner => winner.index === index)
-        ? `${pct}% · ${option.votes} · WINNER`
-        : `${pct}% · ${option.votes}`;
+        ? `${pct}% · ${option.votes} ${option.votes === 1 ? "vote" : "votes"} · WINNER`
+        : `${pct}% · ${option.votes} ${option.votes === 1 ? "vote" : "votes"}`;
       if (!newPoll && p.open && option.votes > (lastVotes[index] || 0)) flashOption(node);
     });
-    document.getElementById("total").textContent = p.total + " votes";
+    document.getElementById("total").textContent = p.total + (p.total === 1 ? " vote" : " votes");
     document.getElementById("hint").innerHTML = p.open ? "Type <b>1</b>–<b>" + p.options.length + "</b> in chat" : '<span class="closed">Final result</span>';
     document.getElementById("top").innerHTML = s.top.length
       ? "🏆 Top voters: " + s.top.map(t => `<b>${esc(t.name)}</b> (${t.votes})`).join(" · ") : "";
