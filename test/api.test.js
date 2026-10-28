@@ -2,11 +2,12 @@
 const { test, before, after } = require("node:test");
 const assert = require("node:assert");
 const { spawn } = require("node:child_process");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 
-const PORT = 3900 + Math.floor(Math.random() * 90);
-const BASE = `http://127.0.0.1:${PORT}`;
+let port;
+let BASE;
 const TOKEN = "secret123";
 let proc;
 
@@ -18,14 +19,23 @@ const post = (url, body, token = TOKEN) =>
   });
 
 before(async () => {
-  proc = spawn("node", [path.join(__dirname, "..", "server.js")], {
-    env: { ...process.env, PORT: String(PORT), CONTROL_TOKEN: TOKEN, DATA_FILE: path.join(os.tmpdir(), `chatpoll-${PORT}.json`) },
+  const portFinder = net.createServer();
+  await new Promise((resolve, reject) => {
+    portFinder.once("error", reject);
+    portFinder.listen(0, "127.0.0.1", resolve);
+  });
+  port = portFinder.address().port;
+  await new Promise((resolve, reject) => portFinder.close((err) => err ? reject(err) : resolve()));
+  BASE = `http://127.0.0.1:${port}`;
+
+  proc = spawn(process.execPath, [path.join(__dirname, "..", "server.js")], {
+    env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), CONTROL_TOKEN: TOKEN, DATA_FILE: path.join(os.tmpdir(), `chatpoll-${port}.json`) },
     stdio: "ignore",
   });
   for (let i = 0; i < 50; i++) {
     try { await fetch(BASE + "/api/state"); return; } catch { await new Promise((r) => setTimeout(r, 100)); }
   }
-  throw new Error("server did not start");
+  throw new Error(`server did not start on 127.0.0.1:${port} (exit code ${proc.exitCode})`);
 });
 after(() => proc && proc.kill());
 
