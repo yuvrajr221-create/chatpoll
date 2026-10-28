@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chat Poll Control Panel</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Segoe UI",system-ui,sans-serif; background:#0e0e10; color:#efeff1; }
+  .wrap { max-width:720px; margin:0 auto; padding:20px 16px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:#adadb8; font-size:14px; margin-bottom:18px; }
+  .card { background:#18181b; border:1px solid #2f2f35; border-radius:12px; padding:16px; margin-bottom:14px; }
+  h2 { font-size:13px; letter-spacing:1.5px; text-transform:uppercase; color:#bf94ff; margin:0 0 10px; }
+  input { width:100%; padding:10px 12px; border-radius:8px; border:1px solid #3a3a3d; background:#0e0e10; color:#fff; font-size:15px; margin-bottom:8px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:#9146ff; color:#fff; font-weight:700; cursor:pointer; font-size:14px; }
+  button.sec { background:#3a3a3d; }
+  button.danger { background:#e91916; }
+  button:hover { filter:brightness(1.12); }
+  .status { display:inline-block; padding:3px 10px; border-radius:99px; font-size:12px; font-weight:700; }
+  .on { background:#00c853; color:#001a09; } .off { background:#555; }
+  .msg { font-size:13px; color:#ffb4b4; min-height:18px; margin-top:6px; }
+  .opt { margin:6px 0; display:flex; justify-content:space-between; background:#0e0e10; padding:8px 12px; border-radius:8px; }
+  ul { padding-left:18px; margin:6px 0; color:#adadb8; font-size:14px; }
+  code { background:#0e0e10; padding:2px 6px; border-radius:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎮 Chat Poll Control Panel</h1>
+  <div class="sub">OBS Browser Source URL: <code id="ovUrl"></code></div>
+
+  <div class="card" id="tokenCard" style="display:none">
+    <h2>Control token</h2>
+    <input id="token" type="password" placeholder="Paste CONTROL_TOKEN (required by this server)">
+  </div>
+
+  <div class="card">
+    <h2>1. Connect to channel <span id="status" class="status off">disconnected</span></h2>
+    <div class="row">
+      <input id="channel" placeholder="Twitch channel name, e.g. mychannel" style="flex:1">
+      <button onclick="setChannel()">Connect</button>
+    </div>
+    <div class="msg" id="chMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Create a poll</h2>
+    <input id="question" placeholder="Question (e.g. What game next?)" maxlength="140">
+    <input class="o" placeholder="Option 1">
+    <input class="o" placeholder="Option 2">
+    <input class="o" placeholder="Option 3 (optional)">
+    <input class="o" placeholder="Option 4 (optional)">
+    <div class="row">
+      <button onclick="startPoll()">▶ Start poll</button>
+      <button class="sec" onclick="act('/api/close')">■ Close &amp; save result</button>
+      <button class="danger" onclick="act('/api/clear')">✕ Clear overlay</button>
+      <button class="sec" onclick="testVote()">+ Test vote</button>
+    </div>
+    <div class="msg" id="pollMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Live results</h2>
+    <div id="live" style="color:#adadb8">No active poll.</div>
+  </div>
+
+  <div class="card">
+    <h2>Recent polls</h2>
+    <ul id="hist"></ul>
+  </div>
+</div>
+<script>
+  document.getElementById("ovUrl").textContent = location.origin + "/overlay.html";
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  const tokenEl = document.getElementById("token");
+  try { tokenEl.value = sessionStorage.getItem("cp_token") || ""; } catch (_) {}
+  tokenEl.addEventListener("input", () => { try { sessionStorage.setItem("cp_token", tokenEl.value); } catch (_) {} });
+
+  async function post(url, body) {
+    const headers = { "Content-Type":"application/json" };
+    if (tokenEl.value) headers["X-Control-Token"] = tokenEl.value;
+    const r = await fetch(url, { method:"POST", headers, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) document.getElementById("tokenCard").style.display = "";
+    if (!r.ok) throw new Error(j.error || "Request failed");
+    return j;
+  }
+  // Run a request with all buttons disabled so double clicks can't overlap.
+  async function busy(fn, msgId) {
+    const btns = document.querySelectorAll("button");
+    btns.forEach(b => b.disabled = true);
+    const m = document.getElementById(msgId);
+    try { await fn(); m.textContent = ""; } catch (e) { m.textContent = e.message; }
+    finally { btns.forEach(b => b.disabled = false); }
+  }
+  function act(url) { return busy(() => post(url), "pollMsg"); }
+  function setChannel() {
+    return busy(() => post("/api/channel", { channel: document.getElementById("channel").value }), "chMsg");
+  }
+  function startPoll() {
+    const options = [...document.querySelectorAll("input.o")].map(i => i.value);
+    return busy(() => post("/api/poll", { question: document.getElementById("question").value, options }), "pollMsg");
+  }
+  function testVote() {
+    return busy(() => post("/api/testvote", { option: String(1 + Math.floor(Math.random() * 2)) }), "pollMsg");
+  }
+
+  function render(s) {
+    const st = document.getElementById("status");
+    st.textContent = s.connected ? "connected to #" + s.channel : (s.channel ? "connecting to #" + s.channel + "…" : "disconnected");
+    document.getElementById("chMsg").textContent = s.ircError || "";
+    st.className = "status " + (s.connected ? "on" : "off");
+    const live = document.getElementById("live");
+    if (!s.poll) live.textContent = "No active poll.";
+    else live.innerHTML = `<b>${esc(s.poll.question)}</b> ${s.poll.open ? "" : "(closed)"}` +
+      s.poll.options.map((o, i) => `<div class="opt"><span>${i + 1}. ${esc(o.text)}</span><b>${o.votes}</b></div>`).join("") +
+      `<div style="margin-top:6px">Total votes: ${s.poll.total}</div>`;
+    document.getElementById("hist").innerHTML = s.history.length
+      ? s.history.map(h => `<li>${esc(h.question)} → <b>${esc(h.winner)}</b> (${h.total} votes)</li>`).join("")
+      : "<li>No polls yet</li>";
+  }
+  let retry = 0;
+  function connect() {
+    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+    ws.onopen = () => { retry = 0; };
+    ws.onmessage = e => {
+      try { const m = JSON.parse(e.data); if (m && m.type === "state") render(m.state); } catch (_) {}
+    };
+    ws.onerror = () => ws.close();
+    ws.onclose = () => setTimeout(connect, Math.min(15000, 1000 * 2 ** retry++));
+  }
+  connect();
+</script>
+</body>
+</html>

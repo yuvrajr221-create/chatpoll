@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chat Poll Overlay</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --accent:#9146ff; --accent2:#00e5ff; --bg:rgba(15,12,30,.88); }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:transparent; font-family:"Segoe UI",system-ui,sans-serif; color:#fff; }
+  .card { width:min(440px, calc(100vw - 40px)); margin:20px; padding:18px 20px; background:var(--bg); border:2px solid var(--accent);
+          border-radius:16px; box-shadow:0 8px 30px rgba(0,0,0,.5); animation:pop .35s ease; }
+  @keyframes pop { from { transform:translateY(20px) scale(.96); opacity:0; } to { transform:none; opacity:1; } }
+  .tag { font-size:12px; letter-spacing:2px; text-transform:uppercase; color:var(--accent2); font-weight:700; }
+  .q { font-size:22px; font-weight:800; margin:6px 0 14px; line-height:1.25; }
+  .opt { position:relative; margin:8px 0; border-radius:10px; overflow:hidden; background:rgba(255,255,255,.08); height:42px; }
+  .bar { position:absolute; inset:0 auto 0 0; width:0%; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .5s ease; opacity:.85; }
+  .row { position:absolute; inset:0; display:flex; align-items:center; justify-content:space-between; padding:0 12px; font-weight:700; }
+  .num { background:#fff; color:#111; border-radius:6px; padding:1px 8px; margin-right:10px; font-size:14px; }
+  .opt.win { outline:3px solid gold; }
+  .foot { margin-top:10px; font-size:13px; opacity:.8; display:flex; justify-content:space-between; }
+  .closed { color:gold; font-weight:700; }
+  .top { margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.15); font-size:13px; }
+  .top b { color:var(--accent2); }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div id="app" class="card hidden">
+  <div class="tag" id="tag">Chat Poll</div>
+  <div class="q" id="q"></div>
+  <div id="opts"></div>
+  <div class="foot"><span id="total"></span><span id="hint"></span></div>
+  <div class="top" id="top"></div>
+</div>
+<script>
+  const app = document.getElementById("app");
+  let retry = 0;
+  function connect() {
+    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+    ws.onopen = () => { retry = 0; };
+    ws.onmessage = (e) => {
+      try { const m = JSON.parse(e.data); if (m && m.type === "state") render(m.state); } catch (_) {}
+    };
+    ws.onerror = () => ws.close();
+    ws.onclose = () => setTimeout(connect, Math.min(15000, 1000 * 2 ** retry++));
+  }
+  function esc(s){ return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+  function render(s) {
+    const p = s.poll;
+    if (!p) { app.classList.add("hidden"); return; }
+    app.classList.remove("hidden");
+    document.getElementById("tag").textContent = p.open ? "● Live Chat Poll" : "Poll Closed";
+    document.getElementById("q").textContent = p.question;
+    const max = Math.max(...p.options.map(o => o.votes));
+    document.getElementById("opts").innerHTML = p.options.map((o, i) => {
+      const pct = p.total ? Math.round(o.votes / p.total * 100) : 0;
+      const win = !p.open && max > 0 && o.votes === max;
+      return `<div class="opt ${win ? "win" : ""}"><div class="bar" style="width:${pct}%"></div>
+        <div class="row"><span><span class="num">${i + 1}</span>${esc(o.text)}</span><span>${pct}% · ${o.votes}</span></div></div>`;
+    }).join("");
+    document.getElementById("total").textContent = p.total + " votes";
+    document.getElementById("hint").innerHTML = p.open ? "Type <b>1</b>–<b>" + p.options.length + "</b> in chat" : '<span class="closed">Final result</span>';
+    document.getElementById("top").innerHTML = s.top.length
+      ? "🏆 Top voters: " + s.top.map(t => `<b>${esc(t.name)}</b> (${t.votes})`).join(" · ") : "";
+  }
+  connect();
+</script>
+</body>
+</html>
